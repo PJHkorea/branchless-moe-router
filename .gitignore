@@ -1,0 +1,26 @@
+# ==============================================================================
+# [PROJECT] Fluidic Network Grid - MoE Infrastructure Insertion Adapter V2.0
+# [FILE] .gitignore
+# ==============================================================================
+
+# 1. Python Runtime & Cache Isolations
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# 2. XLA Compiler & HLO Profiler Dump Artifacts
+# 프로파일러가 실행될 때마다 로컬에 생성되는 기계어 텍스트 파일 배제
+fng_moe_optimized_hlo.txt
+
+# 3. Hardware Profiling & CUDA Logs
+*.log
+*.prof
+*.qdrep
+.nv/
+
+# 4. OS & IDE Configuration Templates
+.DS_Store
+.vscode/
+.idea/
