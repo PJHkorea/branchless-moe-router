@@ -11,7 +11,7 @@ __pycache__/
 .mypy_cache/
 
 # 2. XLA Compiler & HLO Profiler Dump Artifacts
-# 프로파일러가 실행될 때마다 로컬에 생성되는 기계어 텍스트 파일 배제
+# Exclude ephemeral machine-language text artifacts dumped dynamically during compilation scans
 fng_moe_optimized_hlo.txt
 
 # 3. Hardware Profiling & CUDA Logs
