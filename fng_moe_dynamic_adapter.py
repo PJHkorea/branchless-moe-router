@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import torch
 from typing import Dict, Any, Tuple
 
-# 전역 설정 및 핵심 팩토리 커널 임포트
+# Load global configurations and core factory compilation kernels
 from fng_moe_config import NUM_EXPERTS, FEATURE_DIM, BUCKET_SIZES, get_tokens_per_expert
 from fng_moe_core_kernel import create_fng_moe_autograd_pipeline
 from fng_moe_autograd_bridge import FngMoeAutogradBridge
@@ -17,34 +17,35 @@ from fng_moe_autograd_bridge import FngMoeAutogradBridge
 class FngMoeDynamicShapeAdapter:
     def __init__(self, mesh: jax.sharding.Mesh):
         """
-        [DYNAMIC INFERENCE INFRA] 
-        가변 시퀀스 추론 가속화를 위해 동적 버킷 격리 레이어를 탑재한 MoE 어댑터 코어.
+        [DYNAMIC INFERENCE INFRA]
+        Core MoE adapter equipped with a dynamic compilation bucket isolation layer 
+        to accelerate variable-length sequence inference without latency spikes.
         """
         self.mesh = mesh
         self.bucket_sizes = sorted(BUCKET_SIZES)
         self.max_global_tokens = self.bucket_sizes[-1]
         
-        # 각 버킷 크기별로 최적화된 팩토리 라우터 커널을 독립적으로 JIT 사전 동결 컴파일
-        # 런타임에는 조건문 분기 없이 딕셔너리 매핑(0ns 주소 호출)으로 실행 커널을 핫스왑합니다.
+        # Pre-compile optimized factory router kernels independently for each bucket size to freeze JIT graph.
+        # At runtime, execution kernels are hot-swapped via dictionary mapping (0ns address lookup) without any branch conditions.
         self.router_bucket_registry = {}
         self._precompile_all_buckets()
         print(f"🔒 [FNG ADAPTER] Dynamic-Shape Buckets Registered and Frozen: {self.bucket_sizes}")
 
     def _precompile_all_buckets(self):
         """
-        오프라인 환경에서 각 버킷 규격에 맞는 XLA 대수적 멀티플렉서 그래프를 영구 동결합니다.
+        Triggers offline JIT compilation boundary freezes to permanently lock the XLA algebraic multiplexer graphs.
         """
         for bucket_size in self.bucket_sizes:
-            # 버킷 크기에 비례하여 전문가당 수용 가능한 정적 레지스터 크기를 가변 조정
+            # Dynamically calibrate the static register slot capacity assigned per expert proportionally to the bucket size
             tokens_per_expert = get_tokens_per_expert(bucket_size)
             
-            # 독립된 컴파일 실행 객체 생성 및 레지스트리 영구 등록
+            # Instantiate independent compilation pipelines and persist them into the routing registry
             raw_pipeline = create_fng_moe_autograd_pipeline(tokens_per_expert)
             self.router_bucket_registry[bucket_size] = raw_pipeline
 
     def _find_optimal_bucket(self, actual_tokens_count: int) -> int:
         """
-        [1클럭 바이너리 서치] 입력 토큰 스트림을 수용할 최적의 정적 컴파일 버킷 경계를 산출합니다.
+        [1-Clock Binary Search] Computes the optimal static compilation boundary bucket capable of absorbing the incoming token stream.
         """
         for bucket in self.bucket_sizes:
             if actual_tokens_count <= bucket:
@@ -53,31 +54,32 @@ class FngMoeDynamicShapeAdapter:
 
     def inject_dynamic_inference_pass(
         self, 
-        hidden_states: torch.Tensor, # [Actual_Tokens, Feature_Dim] (가변 추론 시퀀스 입력)
+        hidden_states: torch.Tensor, # [Actual_Tokens, Feature_Dim] (Variable-length inference sequence input)
         gate_logits: torch.Tensor    # [Actual_Tokens, Num_Experts]
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
         """
         [DYNAMIC INFERENCE ENTRYPOINT]
-        KV 캐시 유실을 차단하고 가속기 렉 없이 가변 시퀀스를 소화하는 고속 인퍼런스 패스.
+        High-velocity inference pass tailored to swallow variable sequence tokens while insulating KV cache and eliminating tracer stalls.
         """
         actual_tokens = hidden_states.shape[0]
         
-        # 1. 런타임에 최적의 정적 컴파일 버킷 축 핫스왑 선택 (Re-compilation 전면 차단)
+        # 1. Hot-swap and assign the optimal pre-compiled static execution bucket at runtime to completely block re-compilation jitter
         target_bucket_size = self._find_optimal_bucket(actual_tokens)
         pad_size = target_bucket_size - actual_tokens
+
         
-        # 2. PyTorch 하드웨어 메모리 단에서 초고속 정적 패딩 가동
+              # 2. Execute ultra-high-speed static hardware padding directly on PyTorch memory layouts
         if pad_size > 0:
-            # 빈 공간은 0.0, 게이팅 로짓은 마스킹을 위해 극단적인 음수(-1e9)로 물리 패딩
-            # XLA jnp.argmax가 패딩 영역을 안전하게 더미 주소선으로 격리하도록 유도
+            # Pad token hidden states with 0.0, and isolate gating logits using an extreme negative clipping value (-1e9)
+            # This forces the XLA jnp.argmax selector to safely redirect and isolate padded zones into dummy address lanes
             hidden_states_padded = torch.nn.functional.pad(hidden_states, (0, 0, 0, pad_size), value=0.0)
             gate_logits_padded = torch.nn.functional.pad(gate_logits, (0, 0, 0, pad_size), value=-1e9)
         else:
             hidden_states_padded = hidden_states
             gate_logits_padded = gate_logits
 
-        # 3. Autograd 제로카피 미분 체인 및 분산 메시 파이프라인 관류
-        # 패딩 처리된 정적 버킷 크기의 실행 커널을 맵에서 0ns 핫스왑 드로우
+        # 3. Stream through the Autograd zero-copy derivative chain and distributed mesh pipeline
+        # Hot-swap and draw the target execution kernel calibrated exactly to the static padded bucket size
         target_pipeline = self.router_bucket_registry[target_bucket_size]
         
         torch_combined_padded = FngMoeAutogradBridge.apply(
@@ -87,11 +89,12 @@ class FngMoeDynamicShapeAdapter:
             gate_logits_padded
         )
         
-        # 4. [0-copy 슬라이싱 복원] 패딩된 더미 영역을 도살하고 실제 원본 토큰 시퀀스만 칼같이 슬라이싱
-        # 이 연산은 메모리 카피를 발생시키지 않고 오리지널 가상 뷰 포인터만 재정렬합니다.
+        # 4. [Zero-Copy Slicing Restructure] Truncate dummy padded areas and slice out only the active raw token sequences
+        # This operation guarantees zero memory movement, simply reorganizing the original virtual viewport pointers
         torch_final_out = torch_combined_padded[:actual_tokens, :]
         
-        # 하드웨어 비동기 스트림 메모리 파멸 방지용 수명 주기 가드 배치
+        # Lifetime extension guards to safeguard memory segments from asynchronous accelerator stream corruption
         torch_final_out._source_tensors = (hidden_states, gate_logits, torch_combined_padded)
         
         return torch_final_out, {"bucket_used": target_bucket_size, "padded_tokens": pad_size}
+
