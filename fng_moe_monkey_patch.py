@@ -10,52 +10,53 @@ from typing import Any, Tuple
 
 def inject_fng_moe_infrastructure_hook(model: torch.nn.Module, adapter_instance: Any) -> torch.nn.Module:
     """
-    [INFRASTRUCTURE INTERRUPT] 
-    HuggingFace / vLLM의 MoE 레이어 연산 전치부를 가로채 
-    JAX 0ns 가속기 메시 어댑터 패스로 강제 포워딩하는 몽키 패치 엔진.
+    [INFRASTRUCTURE INTERRUPT]
+    A runtime hijack engine that intercepts the entrypoint of official Hugging Face / vLLM 
+    MoE routing layers and forcibly diverts tensor trajectories onto the 0ns JAX accelerator 
+    mesh adapter pipeline.
     """
     print("🔒 [INJECTION] Initiating Fluidic Network Grid Hook Placement...")
     patched_blocks_count = 0
 
     # ==============================================================================
-    # 1. MIXTRAL-8x7B 타겟 가로채기 클로저 정의
+    # 1. Mixtral-8x7B Execution Hijack Closure Definition
     # ==============================================================================
     def _patched_mixtral_moe_forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        transformers.models.mixtral.modeling_mixtral.MixtralSparseMoeBlock.forward 오버라이드
+        Overrides transformers.models.mixtral.modeling_mixtral.MixtralSparseMoeBlock.forward
         """
         batch_size, sequence_length, hidden_dim = hidden_states.shape
         flat_hidden_states = hidden_states.view(-1, hidden_dim)
         
-        # 오리지널 게이팅 네트워크 연산 수행 (HBM 게이트 로짓 도출)
+        # Execute native gating network operation to derive HBM-level gating logits
         gate_logits = self.gate(flat_hidden_states)
 
-        # [JAX MUX INTERRUPT] All-to-All 통신 및 기존 PyTorch 라우팅 루프 전면 도살
-        # DLPack 제로카피 미분 체인 및 동적 버킷 패딩 레이어 관류
+        # [JAX MUX INTERRUPT] Completely neutralize All-to-All communication costs and native PyTorch routing loops.
+        # Direct the streaming memory through the DLPack zero-copy derivative chain and dynamic bucketing layers.
         torch_dispatched_out, telemetry = adapter_instance.inject_dynamic_inference_pass(
             flat_hidden_states, 
             gate_logits
         )
 
-        # 가상 결합(Combine)까지 완료된 0ns 수축 텐서 차원 복원
+        # Reconstruct the original 3D spatial tensor dimensions from the unified 0ns collapsed stream
         final_output = torch_dispatched_out.view(batch_size, sequence_length, hidden_dim)
         
-        # 오리지널 허깅페이스 규격 인터페이스 리턴 값 일치 (Output, Router_Logits)
+        # Maintain strict interface alignment with official Hugging Face specifications (Output, Router_Logits)
         return final_output, gate_logits
 
     # ==============================================================================
-    # 2. DEEPSEEK-V3 타겟 가로채기 클로저 정의 (Dual-Pipe & 다중 전문가 대응)
+    # 2. DeepSeek-V3 Execution Hijack Closure Definition (Multi-Expert Alignment)
     # ==============================================================================
     def _patched_deepseek_moe_forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """
-        DeepSeek-V3 MoE 정방향 게이팅 패스 가로채기 후크
+        Interceptors hooked into the DeepSeek-V3 MoE forward gating trajectory pass
         """
         flat_hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
         
-        # DeepSeek 고유의 가중치 라우팅 게이트 소스 연산 추출
+        # Harvest the discrete routing gating logits from native DeepSeek network sources
         gate_logits = self.gate(flat_hidden_states)
         
-        # JAX 가속기 메시 0ns 수축 매니폴드 인터럽트 관류
+        # Stream into the JAX accelerator mesh 0ns manifold conduit diversion pass
         torch_dispatched_out, telemetry = adapter_instance.inject_dynamic_inference_pass(
             flat_hidden_states, 
             gate_logits
@@ -64,15 +65,16 @@ def inject_fng_moe_infrastructure_hook(model: torch.nn.Module, adapter_instance:
         final_output = torch_dispatched_out.view_as(hidden_states)
         return final_output
 
-    # ==============================================================================
-    # 3. 런타임 메모리 추적 및 객체 바인딩 트리거 (Monkey Patching)
+
+      # ==============================================================================
+    # 3. Runtime Memory Trajectory Tracking & Layer Interception (Monkey Patching)
     # ==============================================================================
     for name, module in model.named_modules():
         class_name = module.__class__.__name__
         
-        # 클래스 문자열 매칭을 통해 코어 블록 정밀 추적 조준
+        # Target code substrates precisely via string-based architectural class matching
         if class_name == "MixtralSparseMoeBlock":
-            # 인스턴스 바인딩 메서드를 런타임에 동적으로 변경 (속도 저하 0ns)
+            # Execute dynamic method grafting onto active instances at runtime (Guarantees 0ns dispatch overhead)
             module.forward = types.MethodType(_patched_mixtral_moe_forward, module)
             patched_blocks_count += 1
             
